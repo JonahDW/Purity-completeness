@@ -1,0 +1,15 @@
+{
+    "process_image" : {
+        "thresh_isl" : 4.0,
+        "thresh_pix" : 4.5,
+        "group_tol" : 10.0,
+        "rms_box" : "(150,15)",
+        "adaptive_rms_box" : true,
+        "adaptive_thresh" : 100.0,
+        "rms_box_bright" : "(40,15)"
+    },
+    "write_catalog" : {
+	"catalog_type" : "srl",
+	"clobber" : true
+    }
+}
