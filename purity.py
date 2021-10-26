@@ -13,6 +13,8 @@ from astropy.io import fits
 import astropy.units as u
 
 from argparse import ArgumentParser
+from pathlib import Path
+
 import bdsf
 
 plt.rc('font', **{'family': 'serif', 'serif': ['Computer Modern']})
@@ -50,12 +52,16 @@ def run_bdsf(image, rms_map, mean_map):
 
     return outcatalog
 
-def transform_cat(catalog, thresh_pix):
+def transform_cat(catalog):
     '''
     Add distances from pointing center for analysis
     '''
     header = dict([x.split(' = ') for x in catalog.meta['comments'][5:]])
-    catalog = catalog[catalog['Peak_flux']/catalog['Isl_rms'] > thresh_pix]
+
+    path = Path(__file__).parent / 'parsets/bdsf_args.json'
+    with open(path) as f:
+        args_dict = json.load(f)
+    catalog = catalog[catalog['Peak_flux']/catalog['Isl_rms'] > args_dict['process_image']['thresh_pix']]
 
     pointing_center = SkyCoord(float(header['OBSRA'])*u.degree,
                                float(header['OBSDEC'])*u.degree)
@@ -93,7 +99,7 @@ def plot_purity(inverse_catalog, full_catalog):
     full = Table.read(full_catalog)
 
     # Define S/N bins
-    snr_bins = np.arange(4.5,7.6,0.1)
+    snr_bins = np.arange(5.0,10.25,0.25)
     snr_inverse = inverse['Peak_flux']/inverse['Isl_rms']
     snr_full = full['Peak_flux']/full['Isl_rms']
 
@@ -108,20 +114,31 @@ def plot_purity(inverse_catalog, full_catalog):
     ax1.set_ylabel('Fraction')
     ax2.set_ylabel('Counts')
     plt.savefig(os.path.join(output_dir,'purity_snr.png'), dpi=300)
-    plt.show()
+    plt.close()
 
-    '''
-    flux_bins = np.arange(7e-5,7e-4,1e-5)
     fig, ax1 = plt.subplots()
     ax2 = ax1.twinx()
 
-    n_inverse, _, _ = ax2.hist(inverse['Total_flux'], bins=flux_bins, edgecolor='k', facecolor='k', alpha=0.5)
-    n_full, _, _ = ax2.hist(full['Total_flux'], bins=flux_bins, edgecolor='k', facecolor='none')
+    inverse_groups = inverse.group_by('Pointing_id')
+    full_groups = full.group_by('Pointing_id')
 
-    ax1.plot((flux_bins[1:] + flux_bins[:-1]) / 2, n_inverse/n_full, color='r')
-    plt.savefig(os.path.join(output_dir,'purity_flux.png'), dpi=300)
-    plt.show()
-    '''
+    full_counts = []
+    inverse_counts = []
+    for i, group in enumerate(full_groups.groups.keys):
+        full_counts.append(len(full_groups.groups[i]))
+        inverse_counts.append(np.sum(inverse_groups['Pointing_id'] == group['Pointing_id']))
+
+    ax2.bar(range(len(full_groups.groups.keys)), inverse_counts, edgecolor='k', facecolor='k', alpha=0.5)
+    ax2.bar(range(len(full_groups.groups.keys)), full_counts, edgecolor='k', facecolor='none')
+
+    ax1.plot(range(len(full_groups.groups.keys)), np.array(inverse_counts)/np.array(full_counts), color='r')
+
+    ax1.set_xticks(range(len(full_groups.groups.keys)))
+    ax1.set_xticklabels([key.replace('PT-','') for key in full_groups.groups.keys['Pointing_id']], fontsize=8, rotation=45, ha='right')
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir,'purity_im.png'), dpi=300)
+    plt.close()
 
 def main():
     parser = new_argument_parser()
@@ -129,8 +146,6 @@ def main():
 
     input_dir = args.input_dir
     full_catalog = args.full_catalog
-    thresh_isl = args.thresh_isl
-    thresh_pix = args.thresh_pix
 
     # Parse sourcefinding directories
     sf_dirs = sorted(glob.glob(os.path.join(input_dir,'*_pybdsf')))
@@ -155,8 +170,7 @@ def main():
             invert_image(mean_in, mean_out)
 
             out_catalog = run_bdsf(im_out, source+'_rms.fits',
-                                   source+'_inverse_mean.fits',
-                                   thresh_isl, thresh_pix)
+                                   source+'_inverse_mean.fits')
 
             try:
                 inverse_catalog = Table.read(out_catalog)
