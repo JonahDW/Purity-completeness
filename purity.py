@@ -16,6 +16,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 import bdsf
+from helpers import flag_artifacts
 
 plt.rc('font', **{'family': 'serif', 'serif': ['Computer Modern']})
 plt.rc('text', usetex=True)
@@ -43,10 +44,6 @@ def run_bdsf(image, rms_map, mean_map):
     with open(path) as f:
         args_dict = json.load(f)
 
-    # Fix json stupidness
-    args_dict['process_image']['rms_box'] = ast.literal_eval(args_dict['process_image']['rms_box'])
-    args_dict['process_image']['rms_box_bright'] = ast.literal_eval(args_dict['process_image']['rms_box_bright'])
-
     img = bdsf.process_image(image, rmsmean_map_filename=(mean_map,rms_map), **args_dict['process_image'])
     img.write_catalog(outfile = outcatalog, format='fits', **args_dict['write_catalog'])
 
@@ -71,18 +68,13 @@ def transform_cat(catalog):
                             [source['DEC'] for source in catalog],
                             unit=(u.deg,u.deg))
 
-    dra, ddec = pointing_center.spherical_offsets_to(source_coord)
-
-    # Remove unnecessary columns
-    catalog.remove_column('Source_id')
-    catalog.remove_column('Isl_id')
+    sep = pointing_center.separation(source_coord)
 
     # Add columns at appropriate indices
     col_a = Column(pointing_name, name='Pointing_id')
-    col_b = Column(dra, name='dRA')
-    col_c = Column(ddec, name='dDEC')
-    catalog.add_columns([col_a, col_b, col_c],
-                         indexes=[0,2,4])
+    col_b = Column(sep, name='Sep_PC')
+    catalog.add_columns([col_a, col_b],
+                         indexes=[0,6])
 
     return catalog
 
@@ -98,43 +90,103 @@ def plot_purity(inverse_catalog, full_catalog):
     inverse = Table.read(inverse_catalog)
     full = Table.read(full_catalog)
 
-    # Define S/N bins
-    snr_bins = np.arange(5.0,10.25,0.25)
-    snr_inverse = inverse['Peak_flux']/inverse['Isl_rms']
-    snr_full = full['Peak_flux']/full['Isl_rms']
-
-    fig, ax1 = plt.subplots()
-    ax2 = ax1.twinx()
-
-    n_inverse, _, _ = ax2.hist(snr_inverse, bins=snr_bins, edgecolor='k', facecolor='k', alpha=0.5)
-    n_full, _, _ = ax2.hist(snr_full, bins=snr_bins, edgecolor='k', facecolor='none')
-
-    ax1.plot((snr_bins[1:] + snr_bins[:-1]) / 2, n_inverse/n_full, color='r')
-    ax1.set_xlabel('S/N')
-    ax1.set_ylabel('Fraction')
-    ax2.set_ylabel('Counts')
-    plt.savefig(os.path.join(output_dir,'purity_snr.png'), dpi=300)
-    plt.close()
-
-    fig, ax1 = plt.subplots()
-    ax2 = ax1.twinx()
-
     inverse_groups = inverse.group_by('Pointing_id')
     full_groups = full.group_by('Pointing_id')
 
-    full_counts = []
-    inverse_counts = []
+    full_mask = []
     for i, group in enumerate(full_groups.groups.keys):
-        full_counts.append(len(full_groups.groups[i]))
-        inverse_counts.append(np.sum(inverse_groups['Pointing_id'] == group['Pointing_id']))
+        pointing_full = full[full['Pointing_id'] == group['Pointing_id']]
+        pointing_inverse = inverse[inverse['Pointing_id'] == group['Pointing_id']]
 
-    ax2.bar(range(len(full_groups.groups.keys)), inverse_counts, edgecolor='k', facecolor='k', alpha=0.5)
-    ax2.bar(range(len(full_groups.groups.keys)), full_counts, edgecolor='k', facecolor='none')
+        bright_idx = np.argpartition(-pointing_full['Total_flux'], 10)[:10]
+        idx = flag_artifacts(pointing_full[bright_idx], pointing_inverse)
 
-    ax1.plot(range(len(full_groups.groups.keys)), np.array(inverse_counts)/np.array(full_counts), color='r')
+        mask = np.ones(len(pointing_inverse), dtype=bool)
+        mask[idx] = False
+
+        full_mask.append(mask)
+
+    full_mask = np.concatenate(full_mask)
+    reduced_inverse = inverse[full_mask]
+
+    print(f'Found {len(inverse)-len(reduced_inverse)} sources close to bright sources, of {len(inverse)} total sources')
+
+    # Plot as a function of S/N
+
+    # Define S/N bins
+    snr_bins = np.arange(5.0,10.25,0.25)
+    snr_full = full['Peak_flux']/full['Isl_rms']
+    snr_inverse = inverse['Peak_flux']/inverse['Isl_rms']
+    snr_reduced_inverse = reduced_inverse['Peak_flux']/reduced_inverse['Isl_rms']
+
+    fig, ax1 = plt.subplots()
+    ax2 = ax1.twinx()
+
+    n_full, _, _ = ax2.hist(snr_full, bins=snr_bins, edgecolor='k', facecolor='none')
+    n_inverse, _, _ = ax2.hist(snr_inverse, bins=snr_bins, edgecolor='k', facecolor='k', alpha=0.5)
+    n_reduced_inverse, _ = np.histogram(snr_reduced_inverse, bins=snr_bins)
+
+    ax1.plot((snr_bins[1:] + snr_bins[:-1]) / 2, n_inverse/n_full, color='crimson', linestyle=':')
+    ax1.plot((snr_bins[1:] + snr_bins[:-1]) / 2, n_reduced_inverse/n_full, color='crimson')
+    ax1.set_xlabel('S/N')
+    ax1.set_ylabel('Fraction')
+    ax2.set_ylabel('Counts')
+
+    ax1.set_xlim(snr_bins[0], snr_bins[-1])
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir,'purity_snr.png'), dpi=300)
+    plt.close()
+
+    # Plot as a function of distance
+    sep_bins = np.arange(0, 1.2, 0.1)
+
+    fig, ax1 = plt.subplots()
+    ax2 = ax1.twinx()
+
+    n_full, _, _ = ax2.hist(full['Sep_PC'], bins=sep_bins, edgecolor='k', facecolor='none')
+    n_inverse, _, _ = ax2.hist(inverse['Sep_PC'], bins=sep_bins, edgecolor='k', facecolor='k', alpha=0.5)
+    n_reduced_inverse, _ = np.histogram(reduced_inverse['Sep_PC'], bins=sep_bins)
+
+    ax1.plot((sep_bins[1:] + sep_bins[:-1]) / 2, n_inverse/n_full, color='crimson', linestyle=':')
+    ax1.plot((sep_bins[1:] + sep_bins[:-1]) / 2, n_reduced_inverse/n_full, color='crimson')
+    ax1.set_xlabel('Distance from pointing center (degrees)')
+    ax1.set_ylabel('Fraction')
+    ax2.set_ylabel('Counts')
+
+    ax1.set_xlim(sep_bins[0], sep_bins[-1])
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir,'purity_sep.png'), dpi=300)
+    plt.close()
+
+    # Plot as a function of field
+    fig, ax1 = plt.subplots()
+    ax2 = ax1.twinx()
+
+    inverse_ratio = []
+    reduced_inverse_ratio = []
+    for i, group in enumerate(full_groups.groups.keys):
+        color = next(ax2._get_lines.prop_cycler)['color']
+
+        full_counts = len(full_groups.groups[i])
+        inverse_counts = np.sum(inverse['Pointing_id'] == group['Pointing_id'])
+        reduced_inverse_counts = np.sum(reduced_inverse['Pointing_id'] == group['Pointing_id'])
+
+        ax2.bar(i, inverse_counts, edgecolor=color, facecolor=color, alpha=0.5)
+        ax2.bar(i, full_counts, edgecolor=color, facecolor='none')
+
+        inverse_ratio.append(inverse_counts/full_counts)
+        reduced_inverse_ratio.append(reduced_inverse_counts/full_counts)
+
+    ax1.plot(range(len(full_groups.groups.keys)), inverse_ratio, color='crimson', linestyle=':')
+    ax1.plot(range(len(full_groups.groups.keys)), reduced_inverse_ratio, color='crimson')
 
     ax1.set_xticks(range(len(full_groups.groups.keys)))
     ax1.set_xticklabels([key.replace('PT-','') for key in full_groups.groups.keys['Pointing_id']], fontsize=8, rotation=45, ha='right')
+
+    ax1.set_ylabel('Fraction')
+    ax2.set_ylabel('Counts')
 
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir,'purity_im.png'), dpi=300)

@@ -1,6 +1,9 @@
 import numpy as np
 import pickle
 
+import astropy.units as u
+from astropy.coordinates import SkyCoord
+
 def pickle_to_file(data, fname):
     fh = open(fname, 'wb')
     pickle.dump(data, fh)
@@ -58,3 +61,18 @@ def random_ra_dec(ra_c, dec_c, radius, n):
     ra_all[ra_all < 0.] += 360.
 
     return ra_all, dec_all
+
+def flag_artifacts(bright_sources, catalog):
+    catalog_coord = SkyCoord(catalog['RA'], catalog['DEC'], unit='deg', frame='icrs')
+
+    indices = []
+    for source in bright_sources:
+        source_coord = SkyCoord(source['RA'], source['DEC'], unit='deg', frame='icrs')
+
+        d2d = source_coord.separation(catalog_coord)
+        close = d2d < 5*source['Maj']*u.deg
+
+        indices.append(np.where(np.logical_and(close, catalog['Total_flux'] < 0.1*source['Total_flux']))[0])
+
+    indices = np.concatenate(indices)
+    return indices

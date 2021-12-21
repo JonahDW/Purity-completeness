@@ -2,7 +2,10 @@
     "process_image" : {
         "thresh_isl" : 3.0,
         "thresh_pix" : 5.0,
-        "group_tol" : 10.0,
+        "group_by_isl" : true,
+	"atrous_do" : true,
+	"atrous_orig_isl" : true,
+	"atrous_jmax" : 3,
 	"output_opts" : true,
 	"quiet" : true
     },

@@ -1,0 +1,27 @@
+{
+	"header" : {
+		"NAXIS": 2,
+		"NAXIS1": 4000,
+		"CTYPE1": "RA---SIN",
+		"CRPIX1": 2000,
+		"CDELT1": 2.0,
+		"CRVAL1": 0.0,
+		"CUNIT1": "deg",
+		"NAXIS2": 4000,
+		"CTYPE2": "DEC--SIN",
+		"CDELT2": 2.0,
+		"CRVAL2": 0.0,
+		"CRPIX2": 2000,
+		"CUNIT2": "deg",
+		"CTYPE3": "STOKES",
+		"CTYPE4": "FREQ",
+		"CRVAL4": 1.27e9,
+		"CDELT4": 8e8,
+		"BMAJ": 6.0,
+		"BMIN": 6.0,
+		"BPA": 90.0
+	},
+	"properties" : {
+		"RMS": 1e-5
+	}
+}
