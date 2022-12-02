@@ -1,8 +1,14 @@
+import sys
+
 import numpy as np
 import pickle
 
 import astropy.units as u
+from astropy.table import unique
+from astropy.io import fits
 from astropy.coordinates import SkyCoord
+
+from scipy.interpolate import interp1d
 
 def pickle_to_file(data, fname):
     fh = open(fname, 'wb')
@@ -15,54 +21,95 @@ def pickle_from_file(fname):
     fh.close()
     return data
 
-def random_ra_dec(ra_c, dec_c, radius, n):
+def random_ra_dec(ra_c, dec_c, radius, n, square=False):
 
-    def sample(N):
+    def sample_circle(N):
+        '''
+        Samples source in a circular image
+        '''
+        r = np.sqrt(np.random.uniform(size=N))
+        theta = 2*np.pi*np.random.uniform(size=N)
+
+        ra = ra_c + ra_radius * r * np.cos(theta)
+        dec = dec_c + dec_radius * r * np.sin(theta)
+
+        return ra, dec
+
+    def sample_square(N):
+        '''
+        Sample sources in a square image
+        '''
+        ramin = ra_c - ra_radius
+        ramax = ra_c + ra_radius
+        decmin = dec_c - dec_radius
+        decmax = dec_c + dec_radius
+
         ra_sample = np.random.uniform(np.radians(ramin), np.radians(ramax), N)
         p = np.random.uniform((np.sin(np.radians(decmin)) + 1) / 2, (np.sin(np.radians(decmax)) + 1) / 2, N)
         dec_sample = np.arcsin(2 * p - 1)
 
         return np.degrees(ra_sample), np.degrees(dec_sample)
 
-    def accept(ra, dec):
-        PA = 0
-        bool_points = ((np.cos(PA)*(ra-ra_c)
-                  +np.sin(PA)*(dec-dec_c))**2
-                  /(ra_radius)**2
-                  +(np.sin(PA)*(ra-ra_c)
-                  -np.cos(PA)*(dec-dec_c))**2
-                  /(dec_radius)**2) <= 1
-        return bool_points
-
     dec_radius = radius
     ra_radius = dec_radius/np.cos(np.deg2rad(dec_c))
 
-    ramin = ra_c - ra_radius
-    ramax = ra_c + ra_radius
-    decmin = dec_c - dec_radius
-    decmax = dec_c + dec_radius
+    if square:
+        ra, dec = sample_square(n)
+    else:
+        ra, dec = sample_circle(n)
 
-    # Sample until all spots are filled
-    ra_all, dec_all = sample(n)
-    mask = accept(ra_all, dec_all)
-    reject = np.where(~mask)[0]
+    # Ensure proper boundaries
+    ra[ra < 0.] += 360.
+    ra[ra > 360.] -= 360
 
-    ra_all = ra_all[mask]
-    dec_all = dec_all[mask]
-    while len(reject) > 0:
-        fill_ra, fill_dec = sample(len(reject))
-        mask = accept(fill_ra, fill_dec)
-        reject = reject[~mask]
+    return ra, dec
 
-        ra_all = np.append(ra_all, fill_ra[mask])
-        dec_all = np.append(dec_all, fill_dec[mask])
+def slice_catalog(catalog, ra_c, dec_c, radius, square=False):
 
-    #Just to make sure
-    ra_all[ra_all < 0.] += 360.
+    def sample_circle(catalog, dra, ddec):
+        dist = dra**2 + ddec**2
 
-    return ra_all, dec_all
+        dra = dra[dist < radius]
+        ddec = ddec[dist < radius]
+        catalog = catalog[dist < radius]
+
+        return catalog, dra, ddec
+
+    def sample_square(catalog, dra, ddec):
+        ra_dist = np.abs(dra)
+        dec_dist = np.abs(ddec)
+
+        dra = dra[np.logical_and(ra_dist < radius, dec_dist < radius)]
+        ddec = ddec[np.logical_and(ra_dist < radius, dec_dist < radius)]
+        catalog = catalog[np.logical_and(ra_dist < radius, dec_dist < radius)]
+
+        return catalog, dra, ddec
+
+    ra = catalog['right_ascension_1']
+    dec = catalog['declination_1']
+
+    min_ra = ra.min() + radius
+    min_dec = dec.min() + radius
+    max_ra = ra.max() - radius
+    max_dec = dec.max() - radius
+
+    dra = ra - np.random.uniform(min_ra, max_ra, 1)
+    ddec = dec - np.random.uniform(min_dec, max_dec, 1)
+
+    if square:
+        catalog, dra, ddec = sample_square(catalog, dra, ddec)
+    else:
+        catalog, dra, ddec = sample_circle(catalog, dra, ddec)
+
+    catalog['right_ascension_1'] = dra + ra_c
+    catalog['declination_1'] = ddec + dec_c
+
+    return catalog
 
 def flag_artifacts(bright_sources, catalog):
+    '''
+    Identify artifacts near bright sources
+    '''
     catalog_coord = SkyCoord(catalog['RA'], catalog['DEC'], unit='deg', frame='icrs')
 
     indices = []
@@ -70,9 +117,40 @@ def flag_artifacts(bright_sources, catalog):
         source_coord = SkyCoord(source['RA'], source['DEC'], unit='deg', frame='icrs')
 
         d2d = source_coord.separation(catalog_coord)
-        close = d2d < 5*source['Maj']*u.deg
+        close = d2d < 5*source['Min']*u.deg
 
-        indices.append(np.where(np.logical_and(close, catalog['Total_flux'] < 0.1*source['Total_flux']))[0])
+        indices.append(np.where(np.logical_and(close, catalog['Peak_flux'] < 0.1*source['Peak_flux']))[0])
 
     indices = np.concatenate(indices)
     return indices
+
+def get_rms_coverage(rms_image):
+    image = fits.open(rms_image)[0]
+    rms_data = image.data.flatten()
+
+    rms_range = np.logspace(np.log10(np.nanmin(rms_data)), np.log10(np.nanmax(rms_data)), 100)
+    coverage = [np.sum([rms_data < rms])/np.count_nonzero(~np.isnan(rms_data)) for rms in rms_range]
+
+    # Define a spline and interpolate the values
+    data_spline = interp1d(rms_range, coverage, bounds_error=False, fill_value=(0,1))
+    return data_spline, rms_range, coverage
+
+def get_rms_radial(rms_image):
+    image = fits.open(rms_image)[0]
+
+    radialprofile = {}
+    center = (image.header['CRPIX1'],image.header['CRPIX2'])
+    data = np.squeeze(image.data)
+
+    y, x = np.indices((data.shape))
+    r = np.sqrt((x - center[0])**2 + (y - center[1])**2)
+    r = r.astype(int)
+
+    r_values, indices, inverse = np.unique(r.ravel(), return_index=True, return_inverse=True)
+    rms = np.array([np.nanmedian(data.ravel()[inverse == r]) for r in r_values])
+
+    r_values = r_values[~np.isnan(rms)]
+    radialprofile['dist'] = r_values*max(image.header['CDELT1'],image.header['CDELT2'])
+    radialprofile['rms'] = rms[~np.isnan(rms)]
+
+    return radialprofile

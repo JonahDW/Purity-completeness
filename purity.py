@@ -98,7 +98,7 @@ def plot_purity(inverse_catalog, full_catalog):
         pointing_full = full[full['Pointing_id'] == group['Pointing_id']]
         pointing_inverse = inverse[inverse['Pointing_id'] == group['Pointing_id']]
 
-        bright_idx = np.argpartition(-pointing_full['Total_flux'], 10)[:10]
+        bright_idx = np.argpartition(-pointing_full['Peak_flux'], 10)[:10]
         idx = flag_artifacts(pointing_full[bright_idx], pointing_inverse)
 
         mask = np.ones(len(pointing_inverse), dtype=bool)
@@ -111,31 +111,33 @@ def plot_purity(inverse_catalog, full_catalog):
 
     print(f'Found {len(inverse)-len(reduced_inverse)} sources close to bright sources, of {len(inverse)} total sources')
 
-    # Plot as a function of S/N
+    # Plot as a function of flux
 
-    # Define S/N bins
-    snr_bins = np.arange(5.0,10.25,0.25)
-    snr_full = full['Peak_flux']/full['Isl_rms']
-    snr_inverse = inverse['Peak_flux']/inverse['Isl_rms']
-    snr_reduced_inverse = reduced_inverse['Peak_flux']/reduced_inverse['Isl_rms']
+    # Define flux bins
+    flux_bins = np.logspace(-4,-1,20)
+    flux_full = full['Total_flux']
+    flux_inverse = inverse['Total_flux']
+    flux_reduced_inverse = reduced_inverse['Total_flux']
 
     fig, ax1 = plt.subplots()
     ax2 = ax1.twinx()
 
-    n_full, _, _ = ax2.hist(snr_full, bins=snr_bins, edgecolor='k', facecolor='none')
-    n_inverse, _, _ = ax2.hist(snr_inverse, bins=snr_bins, edgecolor='k', facecolor='k', alpha=0.5)
-    n_reduced_inverse, _ = np.histogram(snr_reduced_inverse, bins=snr_bins)
+    n_full, _, _ = ax2.hist(flux_full, bins=flux_bins, edgecolor='k', facecolor='none')
+    n_inverse, _, _ = ax2.hist(flux_inverse, bins=flux_bins, edgecolor='k', facecolor='k', alpha=0.5)
+    n_reduced_inverse, _ = np.histogram(flux_reduced_inverse, bins=flux_bins)
 
-    ax1.plot((snr_bins[1:] + snr_bins[:-1]) / 2, n_inverse/n_full, color='crimson', linestyle=':')
-    ax1.plot((snr_bins[1:] + snr_bins[:-1]) / 2, n_reduced_inverse/n_full, color='crimson')
-    ax1.set_xlabel('S/N')
+    ax1.plot((flux_bins[1:] + flux_bins[:-1]) / 2, n_inverse/n_full, color='crimson', linestyle=':')
+    ax1.plot((flux_bins[1:] + flux_bins[:-1]) / 2, n_reduced_inverse/n_full, color='crimson')
+
+    ax1.set_xscale('log')
+    ax1.set_xlabel('Flux density (Jy)')
     ax1.set_ylabel('Fraction')
     ax2.set_ylabel('Counts')
 
-    ax1.set_xlim(snr_bins[0], snr_bins[-1])
+    ax1.set_xlim(flux_bins[0], flux_bins[-1])
 
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir,'purity_snr.png'), dpi=300)
+    plt.savefig(os.path.join(output_dir,'purity_flux.png'), dpi=300)
     plt.close()
 
     # Plot as a function of distance
@@ -150,7 +152,7 @@ def plot_purity(inverse_catalog, full_catalog):
 
     ax1.plot((sep_bins[1:] + sep_bins[:-1]) / 2, n_inverse/n_full, color='crimson', linestyle=':')
     ax1.plot((sep_bins[1:] + sep_bins[:-1]) / 2, n_reduced_inverse/n_full, color='crimson')
-    ax1.set_xlabel('Distance from pointing center (degrees)')
+    ax1.set_xlabel('$\\rho$ (degrees)')
     ax1.set_ylabel('Fraction')
     ax2.set_ylabel('Counts')
 
@@ -209,7 +211,8 @@ def main():
     else:
         full_inverse = Table()
         for sd in sf_dirs:
-            source = os.path.basename(sd).split('_')[0]
+            source = os.path.basename(sd).rsplit('_',1)[0]
+            print(source)
 
             # Invert image
             im_in = os.path.join(os.path.dirname(sd), source+'.fits')
@@ -239,7 +242,8 @@ def main():
             full_inverse = vstack([full_inverse,inverse_catalog])
         full_inverse.write(output_cat_file, overwrite=True)
 
-    plot_purity(output_cat_file, full_catalog)
+    if full_catalog is not None:
+        plot_purity(output_cat_file, full_catalog)
 
 def new_argument_parser():
 
@@ -247,7 +251,7 @@ def new_argument_parser():
 
     parser.add_argument("input_dir",
                         help="""Input directory containing pybdsf directories.""")
-    parser.add_argument("full_catalog",
+    parser.add_argument("--full_catalog", default=None,
                         help="""Full catalog for comparison with inverse catalog.""")
     return parser
 

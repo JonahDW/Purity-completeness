@@ -17,8 +17,8 @@
 		"CTYPE4": "FREQ",
 		"CRVAL4": 1.27e9,
 		"CDELT4": 8e8,
-		"BMAJ": 6.0,
-		"BMIN": 6.0,
+		"BMAJ": 12.0,
+		"BMIN": 12.0,
 		"BPA": 90.0
 	},
 	"properties" : {
