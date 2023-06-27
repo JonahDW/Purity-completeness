@@ -67,7 +67,7 @@ def random_ra_dec(ra_c, dec_c, radius, n, square=False):
 def slice_catalog(catalog, ra_c, dec_c, radius, square=False):
 
     def sample_circle(catalog, dra, ddec):
-        dist = dra**2 + ddec**2
+        dist = np.sqrt(dra**2 + ddec**2)
 
         dra = dra[dist < radius]
         ddec = ddec[dist < radius]
