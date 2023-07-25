@@ -182,7 +182,7 @@ class Image:
 
         return convolved_sources
 
-    def inject_sources(self, catalog, outfile, flux_col, n_samples, orig_counts):
+    def inject_sources(self, catalog, outfile, flux_col, n_samples, orig_counts, imsize, square):
         '''
         Insert sources into an (empty) image from input catalog
 
@@ -193,18 +193,20 @@ class Image:
         '''
         new_image = copy.deepcopy(self.hdulist)
 
-        pixel_scale = max(self.header['CDELT1'],self.header['CDELT2'])
-        imsize = min(np.squeeze(new_image[0].data).shape)
+        if imsize is None:
+            pixel_scale = max(self.header['CDELT1'],self.header['CDELT2'])
+            imlen = min(np.squeeze(new_image[0].data).shape)
+            imsize = imlen*pixel_scale
 
         # Generate random positions for sources
-        radius = imsize*pixel_scale/2
+        radius = imsize/2
         if orig_counts:
             if self.image_id == 'empty':
                 catalog = helpers.slice_catalog(catalog, self.header['CRVAL1'],
                                                 self.header['CRVAL2'], radius, square=True)
             else:
                 catalog = helpers.slice_catalog(catalog, self.header['CRVAL1'],
-                                                self.header['CRVAL2'], radius, square=False)
+                                                self.header['CRVAL2'], radius, square=square)
             catalog.rename_column('right_ascension_1', 'RA')
             catalog.rename_column('declination_1', 'DEC')
         else:
@@ -216,7 +218,8 @@ class Image:
             else:
                 catalog['RA'], catalog['DEC'] = helpers.random_ra_dec(self.header['CRVAL1'],
                                                                       self.header['CRVAL2'],
-                                                                      radius, len(catalog))
+                                                                      radius, len(catalog),
+                                                                      square=square)
 
         image_data = new_image[0].data
         convolved_sources = self.convolve_sources(catalog, flux_col, image_data)
@@ -271,7 +274,7 @@ class Image:
 
         return detected_fraction, flux_fraction
 
-    def do_completeness(self, sim_cat, flux_col, flux_bins, n_sim, n_samples, no_delete, s_type):
+    def do_completeness(self, sim_cat, flux_col, flux_bins, n_sim, n_samples, imsize, square, no_delete, s_type):
         '''
         Do one set of simulations on an image in order to measure the completeness
 
@@ -315,7 +318,7 @@ class Image:
 
                 # Inject sources and do sourcefinding
                 out_image_file = os.path.join(self.image_dir,self.image_id+'_sim_'+str(i)+'.fits')
-                catalog_in = self.inject_sources(catalog_in, out_image_file, flux_col, n_samples, orig_counts)
+                catalog_in = self.inject_sources(catalog_in, out_image_file, flux_col, n_samples, orig_counts, imsize, square)
                 out_catalog_file = self.run_bdsf(out_image_file)
 
                 catalog_out = Table.read(out_catalog_file)
@@ -399,6 +402,8 @@ def main():
     n_flux_bins = int(args.flux_bins)
     n_sim = int(args.n_sim)
     orig_counts = args.orig_counts
+    imsize = float(args.imsize)
+    square = args.square
     no_delete = args.no_delete
 
     # Define image object
@@ -423,6 +428,7 @@ def main():
             sim_cat = sim_flux[np.logical_xor(sim_flux['major_axis'] > 0,sim_flux['minor_axis'] == 0.)]
             detected_fraction, flux_fraction = image.do_completeness(sim_cat, flux_col,
                                                                      flux_bins, n_sim, n_samples,
+                                                                     imsize, square,
                                                                      no_delete, s_type='orig')
 
             completeness = {'flux_bins': flux_bins,
@@ -450,6 +456,7 @@ def main():
             point_flux = sim_flux[sim_flux['major_axis'] == 0]
             detected_fraction_point, flux_fraction_point = image.do_completeness(point_flux, flux_col,
                                                                                  flux_bins, n_sim, n_samples,
+                                                                                 imsize, square,
                                                                                  no_delete, s_type='point')
             point_completeness = {'flux_bins': flux_bins,
                                   'detected_fraction': detected_fraction_point,
@@ -473,6 +480,7 @@ def main():
             extended_flux = sim_flux[np.logical_and(sim_flux['major_axis'] > 0,sim_flux['minor_axis'] > 0)]
             detected_fraction_ext, flux_fraction_ext = image.do_completeness(extended_flux, flux_col,
                                                                              flux_bins, n_sim, n_samples,
+                                                                             imsize, square,
                                                                              no_delete, s_type='ext')
 
             ext_completeness = {'flux_bins': flux_bins,
@@ -524,6 +532,12 @@ def new_argument_parser():
                                 preserve the number counts from the simulated catalog
                                 and sources are injected from a randomly chose patch 
                                 of the catalog. (default = False)""")
+    parser.add_argument("--imsize", default=None,
+                        help="""Specify size of the image in degrees for generating 
+                                source positions. If the image is circular this is the 
+                                diameter. By default this is read from the image header.""")
+    parser.add_argument("--square", action="store_true",
+                        help="Generate sources positions in a square rather than circle.")
     parser.add_argument("--no_delete", action="store_true",
                         help="Do not delete pybdsf logs and images")
 

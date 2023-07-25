@@ -10,7 +10,7 @@ Assess the completeness of your image by injecting fake sources drawn from a cat
 usage: completeness.py [-h] [--outdir OUTDIR] [--min_flux MIN_FLUX]
                        [--max_flux MAX_FLUX] [--n_samples N_SAMPLES]
                        [--flux_bins FLUX_BINS] [--n_sim N_SIM] [--orig_counts]
-                       [--no_delete]
+                       [--imsize IMSIZE] [--square] [--no_delete]
                        image simulated_catalog flux_col
 
 positional arguments:
@@ -39,8 +39,13 @@ optional arguments:
                         preserve the number counts from the simulated catalog
                         and sources are injected from a randomly chose patch
                         of the catalog. (default = False)
+  --imsize IMSIZE       Specify size of the image in degrees for generating
+                        source positions. If the image is circular this is the
+                        diameter. By default this is read from the image
+                        header.
+  --square              Generate sources positions in a square rather than
+                        circle.
   --no_delete           Do not delete pybdsf logs and images
-
 ```
 
 ## purity.py 

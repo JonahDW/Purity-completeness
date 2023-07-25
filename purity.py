@@ -37,7 +37,7 @@ def run_bdsf(image, rms_map, mean_map):
     rms_map    -- Name of rms image
     mean_map   -- Name of mean image
     '''
-    imname = image.rsplit('.')[0]
+    imname = os.path.basename(image).rsplit('.',1)[0]
     outcatalog = imname+'_bdsfcat.fits'
 
     path = Path(__file__).parent / 'parsets/bdsf_args.json'
@@ -60,8 +60,8 @@ def transform_cat(catalog):
         args_dict = json.load(f)
     catalog = catalog[catalog['Peak_flux']/catalog['Isl_rms'] > args_dict['process_image']['thresh_pix']]
 
-    pointing_center = SkyCoord(float(header['OBSRA'])*u.degree,
-                               float(header['OBSDEC'])*u.degree)
+    pointing_center = SkyCoord(float(header['CRVAL1'])*u.degree,
+                               float(header['CRVAL2'])*u.degree)
     pointing_name = ['PT-'+header['OBJECT'].replace("'","")] * len(catalog)
 
     source_coord = SkyCoord([source['RA'] for source in catalog],
@@ -200,6 +200,7 @@ def main():
 
     input_dir = args.input_dir
     full_catalog = args.full_catalog
+    clean_up = args.clean_up
 
     # Parse sourcefinding directories
     sf_dirs = sorted(glob.glob(os.path.join(input_dir,'*_pybdsf')))
@@ -230,16 +231,17 @@ def main():
             try:
                 inverse_catalog = Table.read(out_catalog)
                 inverse_catalog = transform_cat(inverse_catalog)
+                full_inverse = vstack([full_inverse,inverse_catalog])
             except FileNotFoundError:
                 print('File not found, most likely no sources have been found in the image')
 
             # Clean up
-            os.system(f'rm -f {out_catalog}')
+            if clean_up:
+                os.system(f'rm -f {out_catalog}')
+                os.system(f'rm -f {im_out}.pybdsf.log')
             os.system(f'rm -f {im_out}')
             os.system(f'rm -f {mean_out}')
-            os.system(f'rm -f {im_out}.pybdsf.log')
 
-            full_inverse = vstack([full_inverse,inverse_catalog])
         full_inverse.write(output_cat_file, overwrite=True)
 
     if full_catalog is not None:
@@ -250,9 +252,12 @@ def new_argument_parser():
     parser = ArgumentParser()
 
     parser.add_argument("input_dir",
-                        help="""Input directory containing pybdsf directories.""")
+                        help="Input directory containing pybdsf directories.")
     parser.add_argument("--full_catalog", default=None,
-                        help="""Full catalog for comparison with inverse catalog.""")
+                        help="Full catalog for comparison with inverse catalog.")
+    parser.add_argument("--clean_up", action='store_true',
+                        help="""Clean up output for individual images 
+                                leaving only the combined catalog""")
     return parser
 
 if __name__ == '__main__':
