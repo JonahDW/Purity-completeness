@@ -26,10 +26,10 @@ import helpers
 
 class Image:
 
-    def __init__(self, image_file, outdir=None):
-        self.image_file = image_file
-        self.image_id = os.path.basename(image_file).split('_')[0]
-        self.image_dir = os.path.dirname(image_file)
+    def __init__(self, image_name, outdir=None):
+        self.image_id = os.path.basename(image_name)
+        self.image_dir = os.path.dirname(image_name)
+        self.image_file = image_name+'_gaus_resid.fits'
 
         if outdir is None:
             self.output_folder = self.image_dir
@@ -55,7 +55,7 @@ class Image:
             self.hdulist = fits.HDUList([hdu])
 
         else:
-            self.hdulist = fits.open(image_file)
+            self.hdulist = fits.open(self.image_file)
             self.header = self.hdulist[0].header
 
         # Initialize catalog of matches
@@ -392,7 +392,7 @@ def main():
     parser = new_argument_parser()
     args = parser.parse_args()
 
-    image_file = args.image
+    image_name = args.image_name
     simulated_catalog = args.simulated_catalog
     flux_col = args.flux_col
     outdir = args.outdir
@@ -407,7 +407,7 @@ def main():
     no_delete = args.no_delete
 
     # Define image object
-    image = Image(image_file, outdir)
+    image = Image(image_name, outdir)
 
     # Get simulated catalog
     sim_cat = ascii.read(simulated_catalog)
@@ -502,13 +502,15 @@ def new_argument_parser():
 
     parser = ArgumentParser()
 
-    parser.add_argument("image",
-                        help="""Image to add sources to and measure completeness,
-                                should contain no sources, only residuals. An empty
-                                image containing only noise can also be create from scratch
-                                by typing 'empty' instead of a filename. In this case
-                                the header and other properties will be read from 
-                                parsets/empty_image.json""")
+    parser.add_argument("image_name",
+                        help="""Image to measure completeness on, without any extension.
+                                PyBDSF file structure is assumed for the residual 
+                                ('image_name_gaus_resid.fits'), rms ('image_name_rms.fits'),
+                                and mean ('image_name_mean.fits').
+                                An empty image containing only noise can also be created
+                                from scratch by typing 'empty' instead of a filename. 
+                                In this case the header and other properties 
+                                will be read from parsets/empty_image.json""")
     parser.add_argument("simulated_catalog",
                         help="""Name of catalog containing sources, flux to be drawn
                                 from for input catalogs""")

@@ -11,15 +11,18 @@ usage: completeness.py [-h] [--outdir OUTDIR] [--min_flux MIN_FLUX]
                        [--max_flux MAX_FLUX] [--n_samples N_SAMPLES]
                        [--flux_bins FLUX_BINS] [--n_sim N_SIM] [--orig_counts]
                        [--imsize IMSIZE] [--square] [--no_delete]
-                       image simulated_catalog flux_col
+                       image_name simulated_catalog flux_col
 
 positional arguments:
-  image                 Image to add sources to and measure completeness,
-                        should contain no sources, only residuals. An empty
-                        image containing only noise can also be create from
-                        scratch by typing 'empty' instead of a filename. In
-                        this case the header and other properties will be read
-                        from parsets/empty_image.json
+  image_name            Image to measure completeness on, without any
+                        extension. PyBDSF file structure is assumed for the
+                        residual ('image_name_gaus_resid.fits'), rms
+                        ('image_name_rms.fits'), and mean
+                        ('image_name_mean.fits'). An empty image containing
+                        only noise can also be created from scratch by typing
+                        'empty' instead of a filename. In this case the header
+                        and other properties will be read from
+                        parsets/empty_image.json
   simulated_catalog     Name of catalog containing sources, flux to be drawn
                         from for input catalogs
   flux_col              Name of column in catalog containing log flux values
@@ -53,7 +56,7 @@ optional arguments:
 Assess the purity of sourcefinding by extracting the amount of fake sources in an image, accomplished by inverting the regular image and performing sourcefinding on it. This can be compared to the regular catalog of sources already obtained.
 
 ```
-usage: purity.py [-h] [--full_catalog FULL_CATALOG] input_dir
+usage: purity.py [-h] [--full_catalog FULL_CATALOG] [--clean_up] input_dir
 
 positional arguments:
   input_dir             Input directory containing pybdsf directories.
@@ -62,4 +65,6 @@ optional arguments:
   -h, --help            show this help message and exit
   --full_catalog FULL_CATALOG
                         Full catalog for comparison with inverse catalog.
+  --clean_up            Clean up output for individual images leaving only the
+                        combined catalog
 ```
