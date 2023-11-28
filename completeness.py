@@ -396,13 +396,13 @@ def main():
     simulated_catalog = args.simulated_catalog
     flux_col = args.flux_col
     outdir = args.outdir
-    min_flux = float(args.min_flux)
-    max_flux = float(args.max_flux)
-    n_samples = int(args.n_samples)
-    n_flux_bins = int(args.flux_bins)
-    n_sim = int(args.n_sim)
+    min_flux = args.min_flux
+    max_flux = args.max_flux
+    n_samples = args.n_samples
+    n_flux_bins = args.flux_bins
+    n_sim = args.n_sim
     orig_counts = args.orig_counts
-    imsize = float(args.imsize)
+    imsize = args.imsize
     square = args.square
     no_delete = args.no_delete
 
@@ -514,25 +514,25 @@ def new_argument_parser():
                                 from for input catalogs""")
     parser.add_argument("flux_col",
                         help="Name of column in catalog containing log flux values")
-    parser.add_argument("--outdir", default=None,
+    parser.add_argument("--outdir", default=None, type=str,
                         help="""Directory to store output, by default output is stored
                               in the directory of the input image""")
-    parser.add_argument("--min_flux", default=-5,
+    parser.add_argument("--min_flux", default=-5, type=float,
                         help="Log of minimum probed flux in Jansky.")
-    parser.add_argument("--max_flux", default=-2,
+    parser.add_argument("--max_flux", default=-2, type=float,
                         help="Log of maximum probed flux in Jansky.")
-    parser.add_argument("--n_samples", default=5000,
+    parser.add_argument("--n_samples", default=5000, type=int,
                         help="Number of sources to be drawn")
-    parser.add_argument("--flux_bins", default=30,
+    parser.add_argument("--flux_bins", default=30, type=int,
                         help="Amount of flux bins")
-    parser.add_argument("--n_sim", default=10,
+    parser.add_argument("--n_sim", default=10, type=int,
                         help="Number of simulations to run")
     parser.add_argument("--orig_counts", action="store_true",
                         help="""Instead of choosing how many sources are in the image,
                                 preserve the number counts from the simulated catalog
                                 and sources are injected from a randomly chose patch 
                                 of the catalog. (default = False)""")
-    parser.add_argument("--imsize", default=None,
+    parser.add_argument("--imsize", default=None, type=float,
                         help="""Specify size of the image in degrees for generating 
                                 source positions. If the image is circular this is the 
                                 diameter. By default this is read from the image header.""")
