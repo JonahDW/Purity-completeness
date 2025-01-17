@@ -24,6 +24,30 @@ from pathlib import Path
 import bdsf
 import helpers
 
+def save_load_results(func):
+    def wrapper(self, *args, **kwargs):
+        # Define output json file storing completeness
+        outfile = self.image_id+f"_{kwargs['s_type']}_completeness.json"
+        filename = os.path.join(self.output_folder, 
+                                'completeness', outfile)
+
+        # Check if data is there and open
+        if os.path.exists(filename):
+            with open(filename) as f:
+                data = json.load(f)
+        # Otherwise run function
+        else:
+            data = func(self, *args, **kwargs)
+            # Save data to a json file
+            with open(filename, 'w') as outfile:
+                json.dump(data, outfile,
+                          indent=4, sort_keys=True,
+                          separators=(',', ': '),
+                          ensure_ascii=False,
+                          cls=NumpyEncoder)
+        return data
+    return wrapper
+
 class Image:
 
     def __init__(self, image_name, outdir=None):
@@ -46,8 +70,8 @@ class Image:
             # Convert stuff to degrees
             self.header['CDELT1'] /= 3600
             self.header['CDELT2'] /= 3600
-            self.header['BMAJ'] /= 3600
-            self.header['BMIN'] /= 3600
+            self.header['BMAJ']   /= 3600
+            self.header['BMIN']   /= 3600
 
             # Create image
             image_data = self.empty_noise_image(image_dict['properties']['RMS'])
@@ -105,18 +129,28 @@ class Image:
         with open(path) as f:
             args_dict = json.load(f)
 
+        # Make sure tuples are correctly parsed
+        if 'rms_box' in args_dict['process_image']:
+            if args_dict['process_image']['rms_box'] is not None:
+                args_dict['process_image']['rms_box'] = ast.literal_eval(args_dict['process_image']['rms_box'])
+
         if self.image_id == 'empty':
             img = bdsf.process_image(input_image, **args_dict['process_image'])
         else:
-            img = bdsf.process_image(input_image, rmsmean_map_filename=[self.image_id+'_mean.fits',self.image_id+'_rms.fits'],
+            img = bdsf.process_image(input_image,
+                                     advanced_opts=True,
+                                     rmsmean_map_filename=[self.image_id+'_mean.fits',
+                                                           self.image_id+'_rms.fits'],
                                      **args_dict['process_image'])
 
+        # Uncomment this if you want to check what source finder is doing
         #img.show_fit()
+
         img.write_catalog(outfile = outcatalog, format='fits', **args_dict['write_catalog'])
 
         return outcatalog
 
-    def convolve_sources(self, catalog, flux_col, image):
+    def convolve_sources(self, catalog, image):
         '''
         Convolve sources from input catalog with beam of specified image
 
@@ -158,7 +192,7 @@ class Image:
                 x, y = np.meshgrid(x, y)
 
                 # Integrated flux should match
-                flux_corr = np.sum(gauss_source(x,y))/10**source[flux_col]
+                flux_corr = np.sum(gauss_source(x,y))/10**source['flux']
                 source = gauss_source(x,y)/flux_corr
 
                 # Make sure the source is not out of bounds of the image
@@ -171,7 +205,7 @@ class Image:
                         int(X)-150-minX:int(X)+151-maxX] += source[-minY:301-maxY,-minX:301-maxX]
             else:
                 try: 
-                    data_2d[int(Y),int(X)] += 10**source[flux_col]
+                    data_2d[int(Y),int(X)] += 10**source['flux']
                 except IndexError:
                     print('Source was somehow out of bounds, it will be skipped!')
                     continue
@@ -182,7 +216,7 @@ class Image:
 
         return convolved_sources
 
-    def inject_sources(self, catalog, outfile, flux_col, n_samples, orig_counts, imsize, square):
+    def inject_sources(self, catalog, outfile, realistic_counts, imsize, square):
         '''
         Insert sources into an (empty) image from input catalog
 
@@ -200,7 +234,7 @@ class Image:
 
         # Generate random positions for sources
         radius = imsize/2
-        if orig_counts:
+        if realistic_counts:
             if self.image_id == 'empty':
                 catalog = helpers.slice_catalog(catalog, self.header['CRVAL1'],
                                                 self.header['CRVAL2'], radius, square=True)
@@ -222,7 +256,7 @@ class Image:
                                                                       square=square)
 
         image_data = new_image[0].data
-        convolved_sources = self.convolve_sources(catalog, flux_col, image_data)
+        convolved_sources = self.convolve_sources(catalog, image_data)
 
         image_data[0,0,:,:] += convolved_sources
 
@@ -231,9 +265,9 @@ class Image:
 
         return catalog
 
-    def match_completeness(self, catalog_in, catalog_out):
+    def match_catalog(self, catalog_in, catalog_out):
         '''
-        Measure completeness of detected sources by matching to the input catalog
+        Match to the input catalog to catalog of recovered sources
 
         Keyword arguments:
         catalog_in  -- Input catalog
@@ -246,35 +280,37 @@ class Image:
         c_in = SkyCoord(catalog_in['RA'], catalog_in['DEC'], unit=u.deg)
         c_out = SkyCoord(catalog_out['RA'], catalog_out['DEC'], unit=u.deg)
 
-        idx, d2d, d3d = c_in.match_to_catalog_sky(c_out)
+        idx, d2d, d3d = c_out.match_to_catalog_sky(c_in)
         sep_constraint = d2d < match_dist*u.arcsec
 
-        catalog_out['idx'] = np.arange(len(catalog_out))
-        catalog_in['idx'] = np.inf
-        catalog_in['idx'][sep_constraint] = idx[sep_constraint]
+        catalog_in['idx']  = np.arange(len(catalog_in))
+        catalog_out['idx'] = np.inf
+        catalog_out['idx'][sep_constraint] = idx[sep_constraint]
 
-        catalog_out_matches = catalog_out[np.unique(idx[sep_constraint])]
+        catalog_out_matches = catalog_out[sep_constraint]
         matched_catalog = join(catalog_in, catalog_out_matches, join_type='left', keys='idx')
 
         return matched_catalog
 
-    def get_fractions(self, matched_catalog, flux_bins, flux_col, n_samples):
+    def get_fractions(self, matched_catalog, flux_bins, n_sources):
         '''
         Get completeness fractions
         '''
-        matched_sources = matched_catalog[matched_catalog['idx'] < n_samples]
+        matched_sources = matched_catalog[matched_catalog['Source_id'] < n_sources]
 
-        n_sources, _ = np.histogram(10**matched_catalog[flux_col], bins=flux_bins)
-        n_in_matches, _ = np.histogram(10**matched_sources[flux_col], bins=flux_bins)
-        detected_fraction = n_in_matches/n_sources
+        n_total_sources, _ = np.histogram(10**matched_catalog['flux'], bins=flux_bins)
+        n_in_matches, _ = np.histogram(10**matched_sources['flux'], bins=flux_bins)
+        detected_fraction = n_in_matches/n_total_sources
 
         n_out_matches, _ = np.histogram(matched_sources['Total_flux'], bins=flux_bins)
         with np.errstate(divide='ignore', invalid='ignore'):
-            flux_fraction = n_out_matches/n_sources
+            flux_fraction = n_out_matches/n_total_sources
 
         return detected_fraction, flux_fraction
 
-    def do_completeness(self, sim_cat, flux_col, flux_bins, n_sim, n_samples, imsize, square, no_delete, s_type):
+    @save_load_results
+    def do_completeness(self, flux_bins, n_sim, n_sources, sim_cat, realistic_counts,
+                        imsize, square, no_delete, s_type):
         '''
         Do one set of simulations on an image in order to measure the completeness
 
@@ -288,42 +324,51 @@ class Image:
         detected_fraction = np.zeros((n_sim,len(flux_bins)-1))
         flux_fraction = np.zeros((n_sim,len(flux_bins)-1))
         for i in range(n_sim):
-            print(i)
-            matched_catalog_file = os.path.join(self.output_folder,'completeness',f'{self.image_id}_sim_{i}_{s_type}_catalog.fits')
+            print(f'Running simulation {i}')
+            matched_cat_file = os.path.join(self.output_folder,'completeness',
+                                            f'{self.image_id}_sim_{i}_{s_type}_catalog.fits')
 
-            if os.path.exists(matched_catalog_file):
-                matched_catalog = Table.read(matched_catalog_file)
+            # Draw sample of sources and flux densities
+            if os.path.exists(matched_cat_file):
+                matched_cat = Table.read(matched_cat_file)
             else:
-                # Draw random samples from flux catalog
-                if s_type == 'orig':
-                    orig_counts = True
+                if realistic_counts:
                     catalog_in = sim_cat
+                elif s_type == 'point':
+                    fluxes = np.random.uniform(np.log10(flux_bins[0]),
+                                               np.log10(flux_bins[-1]),
+                                               n_sources)
+                    catalog_in = Table()
+                    catalog_in['flux'] = fluxes
+                    catalog_in['major_axis'] = 0
+                    catalog_in['minor_axis'] = 0
                 else:
-                    orig_counts = False
-
-                    # Draw from bins equally
-                    digitized_flux = np.digitize(10**sim_cat[flux_col], flux_bins)
+                    # Draw from simulated catalogue and equal bins
+                    digitized_flux = np.digitize(10**sim_cat['flux'], flux_bins)
                     catalog_rows = []
                     for j in range(1,len(flux_bins)):
-                        samples_bin = int(n_samples/(len(flux_bins)-1))
+                        samples_bin = int(n_sources/(len(flux_bins)-1))
                         try:
-                            choice = np.random.choice(np.where(digitized_flux == j)[0], samples_bin, replace=False)
+                            choice = np.random.choice(np.where(digitized_flux == j)[0], 
+                                                      samples_bin, replace=False)
                         except ValueError:
                             print('Not enough sources in bin, selecting with replacement')
-                            choice = np.random.choice(np.where(digitized_flux == j)[0], samples_bin, replace=True)
+                            choice = np.random.choice(np.where(digitized_flux == j)[0], 
+                                                      samples_bin, replace=True)
                         catalog_rows.append(choice)
 
                     catalog_rows = np.concatenate(catalog_rows, axis=None)
                     catalog_in = sim_cat[catalog_rows]
 
                 # Inject sources and do sourcefinding
-                out_image_file = os.path.join(self.image_dir,self.image_id+'_sim_'+str(i)+'.fits')
-                catalog_in = self.inject_sources(catalog_in, out_image_file, flux_col, n_samples, orig_counts, imsize, square)
+                out_image_file = os.path.join(self.image_dir,f'{self.image_id}_sim_{i}.fits')
+                catalog_in = self.inject_sources(catalog_in, out_image_file, 
+                                                 realistic_counts, imsize, square)
                 out_catalog_file = self.run_bdsf(out_image_file)
 
                 catalog_out = Table.read(out_catalog_file)
-                matched_catalog = self.match_completeness(catalog_in, catalog_out)
-                matched_catalog.write(matched_catalog_file, overwrite=True)
+                matched_cat = self.match_catalog(catalog_in, catalog_out)
+                matched_cat.write(matched_cat_file, overwrite=True)
 
                 # Clean up
                 os.system(f'rm -f {out_catalog_file}')
@@ -331,14 +376,17 @@ class Image:
                     os.system(f'rm -f {out_image_file}')
                     os.system(f'rm -f {out_image_file}.pybdsf.log')
 
-            detected_fraction[i,:], flux_fraction[i,:] = self.get_fractions(matched_catalog, flux_bins, flux_col, n_samples)
+            detected_fraction[i,:], flux_fraction[i,:] = self.get_fractions(matched_cat, flux_bins, n_sources)
 
-        print(detected_fraction)
-        return detected_fraction, flux_fraction
+        completeness = {'flux_bins': flux_bins,
+                        'detected_fraction': detected_fraction,
+                        'flux_fraction': flux_fraction}
 
-    def plot_results(self, flux_bins, detected_fraction_point=None, detected_fraction_ext=None, detected_fraction_orig=None):
+        return completeness
+
+    def plot_results(self, completeness, s_type):
         '''
-        Plot the results from completeness measures
+        Plot basic results from completeness measures
 
         Keyword arguments:
         flux_bins -- What flux bins to use
@@ -346,45 +394,39 @@ class Image:
         detected_fraction_ext -- Completeness fraction for extended sources
         '''
 
-        if detected_fraction_point is not None:
-            # Point sources
-            mean_fraction = np.mean(detected_fraction_point, axis=0)
-            std_fraction = np.std(detected_fraction_point, axis=0)
+        # Plot recovered fraction
+        mean_fraction = np.mean(completeness['detected_fraction'], axis=0)
+        std_fraction = np.std(completeness['detected_fraction'], axis=0)
 
-            plt.plot(flux_bins[:-1], mean_fraction, color='k', label='Point sources')
-            plt.fill_between(flux_bins[:-1],
-                             mean_fraction-std_fraction,
-                             mean_fraction+std_fraction,
-                             color='k', alpha=0.5)
+        plt.plot(completeness['flux_bins'][:-1], mean_fraction, 
+                 label='Detection completeness', color='k')
+        plt.fill_between(completeness['flux_bins'][:-1],
+                         mean_fraction-std_fraction,
+                         mean_fraction+std_fraction,
+                         color='k', alpha=0.5)
 
-        if detected_fraction_ext is not None:
-            # Extended sources
-            mean_fraction = np.mean(detected_fraction_ext, axis=0)
-            std_fraction = np.std(detected_fraction_ext, axis=0)
+        # Plot flux recovery
+        mean_fraction = np.mean(completeness['flux_fraction'], axis=0)
+        std_fraction = np.std(completeness['flux_fraction'], axis=0)
 
-            plt.plot(flux_bins[:-1], mean_fraction, color='b', label='Extended sources')
-            plt.fill_between(flux_bins[:-1],
-                             mean_fraction-std_fraction,
-                             mean_fraction+std_fraction,
-                             color='b', alpha=0.5)
+        plt.plot(completeness['flux_bins'][:-1], mean_fraction, 
+                 label='Flux completeness', color='crimson')
+        plt.fill_between(completeness['flux_bins'][:-1],
+                         mean_fraction-std_fraction,
+                         mean_fraction+std_fraction,
+                         color='crimson', alpha=0.5)
 
-        if detected_fraction_orig is not None:
-            # Original number counts
-            mean_fraction = np.mean(detected_fraction_orig, axis=0)
-            std_fraction = np.std(detected_fraction_orig, axis=0)
-
-            plt.plot(flux_bins[:-1], mean_fraction, color='b', label='SKADS sources')
-            plt.fill_between(flux_bins[:-1],
-                             mean_fraction-std_fraction,
-                             mean_fraction+std_fraction,
-                             color='b', alpha=0.5)
+        plt.axhline(1,0,1, color='k', ls=':')
 
         plt.legend()
         plt.xscale('log')
         plt.xlabel('Flux density (Jy)')
         plt.ylabel('Completeness')
 
-        plt.savefig(os.path.join(self.output_folder,'completeness',self.image_id+'_completeness.png'), dpi=300)
+        outfile = os.path.join(self.output_folder,
+                               'completeness',
+                               f'{self.image_id}_{s_type}_completeness.png')
+        plt.savefig(outfile, dpi=300)
         plt.close()
 
 def main():
@@ -393,110 +435,57 @@ def main():
     args = parser.parse_args()
 
     image_name = args.image_name
-    simulated_catalog = args.simulated_catalog
-    flux_col = args.flux_col
-    outdir = args.outdir
-    min_flux = args.min_flux
-    max_flux = args.max_flux
-    n_samples = args.n_samples
+    sources = args.sources
+
+    # Simulation options
+    realistic_counts = args.realistic_counts
+    n_sources = args.n_sources
     n_flux_bins = args.flux_bins
     n_sim = args.n_sim
-    orig_counts = args.orig_counts
+    min_flux = args.min_flux
+    max_flux = args.max_flux
+
+    # Catalog options
+    sim_cat = args.sim_cat
+    flux_col = args.flux_col
+
+    # Image options
     imsize = args.imsize
     square = args.square
+
+    # Output options
+    outdir = args.outdir
     no_delete = args.no_delete
 
     # Define image object
     image = Image(image_name, outdir)
 
-    # Get simulated catalog
-    sim_cat = ascii.read(simulated_catalog)
-    sim_flux = sim_cat[np.logical_and(sim_cat[flux_col] > min_flux, sim_cat[flux_col] < max_flux)]
     flux_bins = np.logspace(min_flux,max_flux,n_flux_bins)
+
+    # Get simulated catalog, or otherwise produce a uniform flux density distribution
+    if sim_cat:
+        sim_cat = ascii.read(simulated_catalog)
+        sim_cat.rename_column(flux_col, 'flux')
+        sim_flux = sim_cat[np.logical_and(sim_cat['flux'] > min_flux, sim_cat['flux'] < max_flux)]
 
     if not os.path.exists(os.path.join(image.output_folder, 'completeness')):
         os.mkdir(os.path.join(image.output_folder, 'completeness'))
 
-    if orig_counts:
-        print('Measuring completeness using SKADS number counts')
-        data_file = os.path.join(image.output_folder, 'completeness', image.image_id+'_completeness.json')
-        if os.path.exists(data_file):
-            with open(data_file) as f:
-                completeness = json.load(f)
+    if sources == 'point' and realistic_counts:
+        sim_cat = sim_flux[sim_flux['major_axis'] == 0]
 
-        else:
-            sim_cat = sim_flux[np.logical_xor(sim_flux['major_axis'] > 0,sim_flux['minor_axis'] == 0.)]
-            detected_fraction, flux_fraction = image.do_completeness(sim_cat, flux_col,
-                                                                     flux_bins, n_sim, n_samples,
-                                                                     imsize, square,
-                                                                     no_delete, s_type='orig')
+    if sources == 'extended':
+        sim_cat = sim_flux[np.logical_and(sim_flux['major_axis'] > 0,sim_flux['minor_axis'] > 0)]
 
-            completeness = {'flux_bins': flux_bins,
-                            'detected_fraction': detected_fraction,
-                            'flux_fraction': flux_fraction}
+    if sources == 'realistic':
+        sim_cat = sim_flux[np.logical_xor(sim_flux['major_axis'] > 0,sim_flux['minor_axis'] == 0.)]
 
-            # Save data to a json file
-            with open(data_file, 'w') as outfile:
-                json.dump(completeness, outfile,
-                          indent=4, sort_keys=True,
-                          separators=(',', ': '),
-                          ensure_ascii=False,
-                          cls=NumpyEncoder)
+    completeness = image.do_completeness(flux_bins, n_sim, n_sources,
+                                         sim_cat, realistic_counts,
+                                         imsize, square, no_delete, 
+                                         s_type=sources)
 
-        image.plot_results(flux_bins, detected_fraction_orig=detected_fraction)
-
-    else:
-        # Get completeness for point sources
-        print('Measuring completeness for point sources')
-        data_file = os.path.join(image.output_folder, 'completeness',image.image_id+'_point_completeness.json')
-        if os.path.exists(data_file):
-            with open(data_file) as f:
-                point_completeness = json.load(f)
-        else:
-            point_flux = sim_flux[sim_flux['major_axis'] == 0]
-            detected_fraction_point, flux_fraction_point = image.do_completeness(point_flux, flux_col,
-                                                                                 flux_bins, n_sim, n_samples,
-                                                                                 imsize, square,
-                                                                                 no_delete, s_type='point')
-            point_completeness = {'flux_bins': flux_bins,
-                                  'detected_fraction': detected_fraction_point,
-                                  'flux_fraction': flux_fraction_point}
-
-            # Save data to a json file
-            with open(data_file, 'w') as outfile:
-                json.dump(point_completeness, outfile,
-                          indent=4, sort_keys=True,
-                          separators=(',', ': '),
-                          ensure_ascii=False,
-                          cls=NumpyEncoder)
-
-        # Get completeness for extended sources
-        print('Measuring completeness for extended sources')
-        data_file = os.path.join(image.output_folder, 'completeness', image.image_id+'_extended_completeness.json')
-        if os.path.exists(data_file):
-            with open(data_file) as f:
-                ext_completeness = json.load(f)
-        else:
-            extended_flux = sim_flux[np.logical_and(sim_flux['major_axis'] > 0,sim_flux['minor_axis'] > 0)]
-            detected_fraction_ext, flux_fraction_ext = image.do_completeness(extended_flux, flux_col,
-                                                                             flux_bins, n_sim, n_samples,
-                                                                             imsize, square,
-                                                                             no_delete, s_type='ext')
-
-            ext_completeness = {'flux_bins': flux_bins,
-                                'detected_fraction': detected_fraction_ext,
-                                'flux_fraction': flux_fraction_ext}
-
-            # Save data to a json file
-            with open(data_file, 'w') as outfile:
-                json.dump(ext_completeness, outfile,
-                          indent=4, sort_keys=True,
-                          separators=(',', ': '),
-                          ensure_ascii=False,
-                          cls=NumpyEncoder)
-
-        image.plot_results(flux_bins, detected_fraction_point=point_completeness['detected_fraction'], 
-                           detected_fraction_ext=ext_completeness['detected_fraction'])
+    image.plot_results(completeness, s_type=sources)
 
 def new_argument_parser():
 
@@ -511,35 +500,42 @@ def new_argument_parser():
                                 from scratch by typing 'empty' instead of a filename. 
                                 In this case the header and other properties 
                                 will be read from parsets/empty_image.json""")
-    parser.add_argument("simulated_catalog",
-                        help="""Name of catalog containing sources, flux to be drawn
-                                from for input catalogs""")
-    parser.add_argument("flux_col",
-                        help="Name of column in catalog containing log flux values")
-    parser.add_argument("--outdir", default=None, type=str,
-                        help="""Directory to store output, by default output is stored
-                              in the directory of the input image""")
-    parser.add_argument("--min_flux", default=-5, type=float,
-                        help="Log of minimum probed flux in Jansky.")
-    parser.add_argument("--max_flux", default=-2, type=float,
-                        help="Log of maximum probed flux in Jansky.")
-    parser.add_argument("--n_samples", default=5000, type=int,
-                        help="Number of sources to be drawn")
+    parser.add_argument("sources",
+                        help="""Type of sources to use for simulations. Options are:
+                                'point': Only injects point sources
+                                'extended': Only injects sources with a nonzero size
+                                'realistic': Inject sources of all sizes, with realistic
+                                size distribution. If nonzero source sizes are used in
+                                any way, sources must be drawn from specified
+                                simulated catalogue.""")
+    parser.add_argument("--realistic_counts", action="store_true",
+                        help="""Use a realistic flux density and spatial distribution 
+                                instead of uniform per bin and in space. Simulated 
+                                catalogue must be specified to draw from. (default = False)""")
     parser.add_argument("--flux_bins", default=30, type=int,
                         help="Amount of flux bins")
     parser.add_argument("--n_sim", default=10, type=int,
                         help="Number of simulations to run")
-    parser.add_argument("--orig_counts", action="store_true",
-                        help="""Instead of choosing how many sources are in the image,
-                                preserve the number counts from the simulated catalog
-                                and sources are injected from a randomly chose patch 
-                                of the catalog. (default = False)""")
+    parser.add_argument("--sim_cat", default=None, type=str,
+                        help="""Name of catalog containing sources, flux to be drawn
+                                from for input catalogs""")
+    parser.add_argument("--flux_col", default=None, type=str,
+                        help="Name of column in catalog containing log flux values")
+    parser.add_argument("--min_flux", default=-5, type=float,
+                        help="Log of minimum probed flux in Jansky.")
+    parser.add_argument("--max_flux", default=-2, type=float,
+                        help="Log of maximum probed flux in Jansky.")
+    parser.add_argument("--n_sources", default=5000, type=int,
+                        help="Number of sources to be drawn")
     parser.add_argument("--imsize", default=None, type=float,
                         help="""Specify size of the image in degrees for generating 
                                 source positions. If the image is circular this is the 
                                 diameter. By default this is read from the image header.""")
     parser.add_argument("--square", action="store_true",
                         help="Generate sources positions in a square rather than circle.")
+    parser.add_argument("--outdir", default=None, type=str,
+                        help="""Directory to store output, by default output is stored
+                              in the directory of the input image""")
     parser.add_argument("--no_delete", action="store_true",
                         help="Do not delete pybdsf logs and images")
 

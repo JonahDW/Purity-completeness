@@ -2,15 +2,17 @@
     "process_image" : {
         "thresh_isl" : 3.0,
         "thresh_pix" : 5.0,
+        "rms_box" : "(250,30)",
         "group_by_isl" : true,
-	"atrous_do" : true,
-	"atrous_orig_isl" : true,
-	"atrous_jmax" : 3,
-	"output_opts" : true,
-	"quiet" : true
+        "atrous_do" : true,
+        "atrous_orig_isl" : true,
+        "atrous_jmax" : 3,
+        "maxpix_isl" : 500,
+        "output_opts" : true,
+        "quiet" : false
     },
     "write_catalog" : {
-	"catalog_type" : "srl",
-	"clobber" : true
+        "catalog_type" : "srl",
+        "clobber" : true
     }
 }
