@@ -296,7 +296,7 @@ class Image:
         '''
         Get completeness fractions
         '''
-        matched_sources = matched_catalog[matched_catalog['Source_id'] < n_sources]
+        matched_sources = matched_catalog[matched_catalog['Source_id'].mask == False]
 
         n_total_sources, _ = np.histogram(10**matched_catalog['flux'], bins=flux_bins)
         n_in_matches, _ = np.histogram(10**matched_sources['flux'], bins=flux_bins)
@@ -446,7 +446,7 @@ def main():
     max_flux = args.max_flux
 
     # Catalog options
-    sim_cat = args.sim_cat
+    sim_cat_file = args.sim_cat
     flux_col = args.flux_col
 
     # Image options
@@ -463,8 +463,8 @@ def main():
     flux_bins = np.logspace(min_flux,max_flux,n_flux_bins)
 
     # Get simulated catalog, or otherwise produce a uniform flux density distribution
-    if sim_cat:
-        sim_cat = ascii.read(simulated_catalog)
+    if sim_cat_file:
+        sim_cat = ascii.read(sim_cat_file)
         sim_cat.rename_column(flux_col, 'flux')
         sim_flux = sim_cat[np.logical_and(sim_cat['flux'] > min_flux, sim_cat['flux'] < max_flux)]
 

@@ -7,11 +7,13 @@ The purpose of this module is to assess the purity (how many of my sources are r
 Assess the completeness of your image by injecting fake sources drawn from a catalog of simulated sources into the desired image (ideally a residual image), performing sourcefinding on the image, and seeing how many sources are retrieved.
 
 ```
-usage: completeness.py [-h] [--outdir OUTDIR] [--min_flux MIN_FLUX]
-                       [--max_flux MAX_FLUX] [--n_samples N_SAMPLES]
-                       [--flux_bins FLUX_BINS] [--n_sim N_SIM] [--orig_counts]
-                       [--imsize IMSIZE] [--square] [--no_delete]
-                       image_name simulated_catalog flux_col
+usage: completeness.py [-h] [--realistic_counts] [--flux_bins FLUX_BINS]
+                       [--n_sim N_SIM] [--sim_cat SIM_CAT]
+                       [--flux_col FLUX_COL] [--min_flux MIN_FLUX]
+                       [--max_flux MAX_FLUX] [--n_sources N_SOURCES]
+                       [--imsize IMSIZE] [--square] [--outdir OUTDIR]
+                       [--no_delete]
+                       image_name sources
 
 positional arguments:
   image_name            Image to measure completeness on, without any
@@ -23,31 +25,38 @@ positional arguments:
                         'empty' instead of a filename. In this case the header
                         and other properties will be read from
                         parsets/empty_image.json
-  simulated_catalog     Name of catalog containing sources, flux to be drawn
-                        from for input catalogs
-  flux_col              Name of column in catalog containing log flux values
+  sources               Type of sources to use for simulations. Options are:
+                        'point': Only injects point sources 'extended': Only
+                        injects sources with a nonzero size 'realistic':
+                        Inject sources of all sizes, with realistic size
+                        distribution. If nonzero source sizes are used in any
+                        way, sources must be drawn from specified simulated
+                        catalogue.
 
 optional arguments:
   -h, --help            show this help message and exit
-  --outdir OUTDIR       Directory to store output, by default output is stored
-                        in the directory of the input image
-  --min_flux MIN_FLUX   Log of minimum probed flux in Jansky.
-  --max_flux MAX_FLUX   Log of maximum probed flux in Jansky.
-  --n_samples N_SAMPLES
-                        Number of sources to be drawn
+  --realistic_counts    Use a realistic flux density and spatial distribution
+                        instead of uniform per bin and in space. Simulated
+                        catalogue must be specified to draw from. (default =
+                        False)
   --flux_bins FLUX_BINS
                         Amount of flux bins
   --n_sim N_SIM         Number of simulations to run
-  --orig_counts         Instead of choosing how many sources are in the image,
-                        preserve the number counts from the simulated catalog
-                        and sources are injected from a randomly chose patch
-                        of the catalog. (default = False)
+  --sim_cat SIM_CAT     Name of catalog containing sources, flux to be drawn
+                        from for input catalogs
+  --flux_col FLUX_COL   Name of column in catalog containing log flux values
+  --min_flux MIN_FLUX   Log of minimum probed flux in Jansky.
+  --max_flux MAX_FLUX   Log of maximum probed flux in Jansky.
+  --n_sources N_SOURCES
+                        Number of sources to be drawn
   --imsize IMSIZE       Specify size of the image in degrees for generating
                         source positions. If the image is circular this is the
                         diameter. By default this is read from the image
                         header.
   --square              Generate sources positions in a square rather than
                         circle.
+  --outdir OUTDIR       Directory to store output, by default output is stored
+                        in the directory of the input image
   --no_delete           Do not delete pybdsf logs and images
 ```
 

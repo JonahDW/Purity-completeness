@@ -9,7 +9,7 @@
         "atrous_jmax" : 3,
         "maxpix_isl" : 500,
         "output_opts" : true,
-        "quiet" : false
+        "quiet" : true
     },
     "write_catalog" : {
         "catalog_type" : "srl",
