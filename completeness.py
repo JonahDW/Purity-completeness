@@ -467,6 +467,8 @@ def main():
         sim_cat = ascii.read(sim_cat_file)
         sim_cat.rename_column(flux_col, 'flux')
         sim_flux = sim_cat[np.logical_and(sim_cat['flux'] > min_flux, sim_cat['flux'] < max_flux)]
+    else:
+        sim_cat = None
 
     if not os.path.exists(os.path.join(image.output_folder, 'completeness')):
         os.mkdir(os.path.join(image.output_folder, 'completeness'))
