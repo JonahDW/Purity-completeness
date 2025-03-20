@@ -21,7 +21,7 @@ def pickle_from_file(fname):
     fh.close()
     return data
 
-def random_ra_dec(ra_c, dec_c, radius, n, square=False):
+def random_lonlat(lon_c, lat_c, radius, n, square=False):
 
     def sample_circle(N):
         '''
@@ -30,79 +30,79 @@ def random_ra_dec(ra_c, dec_c, radius, n, square=False):
         r = np.sqrt(np.random.uniform(size=N))
         theta = 2*np.pi*np.random.uniform(size=N)
 
-        ra = ra_c + ra_radius * r * np.cos(theta)
-        dec = dec_c + dec_radius * r * np.sin(theta)
+        lon = lon_c + lon_radius * r * np.cos(theta)
+        lat = lat_c + lat_radius * r * np.sin(theta)
 
-        return ra, dec
+        return lon, lat
 
     def sample_square(N):
         '''
         Sample sources in a square image
         '''
-        ramin = ra_c - ra_radius
-        ramax = ra_c + ra_radius
-        decmin = dec_c - dec_radius
-        decmax = dec_c + dec_radius
+        lonmin = lon_c - lon_radius
+        lonmax = lon_c + lon_radius
+        latmin = lat_c - lat_radius
+        latmax = lat_c + lat_radius
 
-        ra_sample = np.random.uniform(np.radians(ramin), np.radians(ramax), N)
-        p = np.random.uniform((np.sin(np.radians(decmin)) + 1) / 2, (np.sin(np.radians(decmax)) + 1) / 2, N)
-        dec_sample = np.arcsin(2 * p - 1)
+        lon_sample = np.random.uniform(np.deg2rad(lonmin), np.deg2rad(lonmax), N)
+        p = np.random.uniform((np.sin(np.deg2rad(latmin)) + 1) / 2, (np.sin(np.deg2rad(latmax)) + 1) / 2, N)
+        lat_sample = np.arcsin(2 * p - 1)
 
-        return np.degrees(ra_sample), np.degrees(dec_sample)
+        return np.rad2deg(lon_sample), np.rad2deg(lat_sample)
 
-    dec_radius = radius
-    ra_radius = dec_radius/np.cos(np.deg2rad(dec_c))
+    lat_radius = radius
+    lon_radius = lat_radius/np.cos(np.deg2rad(lat_c))
 
     if square:
-        ra, dec = sample_square(n)
+        lon, lat = sample_square(n)
     else:
-        ra, dec = sample_circle(n)
+        lon, lat = sample_circle(n)
 
     # Ensure proper boundaries
-    ra[ra < 0.] += 360.
-    ra[ra > 360.] -= 360
+    lon[lon < 0.] += 360.
+    lon[lon > 360.] -= 360
 
-    return ra, dec
+    return lon, lat
 
-def slice_catalog(catalog, ra_c, dec_c, radius, square=False):
+def slice_catalog(catalog, lon_c, lat_c, radius, square=False):
 
-    def sample_circle(catalog, dra, ddec):
-        dist = np.sqrt(dra**2 + ddec**2)
+    def sample_circle(catalog, dlon, dlat):
+        dist = np.sqrt(dlon**2 + dlat**2)
 
-        dra = dra[dist < radius]
-        ddec = ddec[dist < radius]
+        dlon = dlon[dist < radius]
+        dlat = dlat[dist < radius]
         catalog = catalog[dist < radius]
 
-        return catalog, dra, ddec
+        return catalog, dlon, dlat
 
     def sample_square(catalog, dra, ddec):
-        ra_dist = np.abs(dra)
-        dec_dist = np.abs(ddec)
+        lon_dist = np.abs(dlon)
+        lat_dist = np.abs(dlat)
 
-        dra = dra[np.logical_and(ra_dist < radius, dec_dist < radius)]
-        ddec = ddec[np.logical_and(ra_dist < radius, dec_dist < radius)]
-        catalog = catalog[np.logical_and(ra_dist < radius, dec_dist < radius)]
+        dlon = dlon[np.logical_and(lon_dist < radius, lat_dist < radius)]
+        dlat = dlat[np.logical_and(lon_dist < radius, lat_dist < radius)]
+        catalog = catalog[np.logical_and(lon_dist < radius, lat_dist < radius)]
 
-        return catalog, dra, ddec
+        return catalog, dlon, dlat
 
-    ra = catalog['right_ascension_1']
-    dec = catalog['declination_1']
+    lon = catalog['lon']
+    lat = catalog['lat']
 
-    min_ra = ra.min() + radius
-    min_dec = dec.min() + radius
-    max_ra = ra.max() - radius
-    max_dec = dec.max() - radius
+    min_lon = lon.min() + radius
+    min_lat = lat.min() + radius
+    max_lon = lon.max() - radius
+    max_lat = lat.max() - radius
 
-    dra = ra - np.random.uniform(min_ra, max_ra, 1)
-    ddec = dec - np.random.uniform(min_dec, max_dec, 1)
+    dlon = lon - np.random.uniform(min_lon, max_lon, 1)
+    dlat = lat - np.random.uniform(min_lat, max_lat, 1)
 
     if square:
-        catalog, dra, ddec = sample_square(catalog, dra, ddec)
+        catalog, dlon, dlat = sample_square(catalog, dlon, dlat)
     else:
-        catalog, dra, ddec = sample_circle(catalog, dra, ddec)
+        catalog, dlon, dlat = sample_circle(catalog, dlon, dlat)
 
-    catalog['right_ascension_1'] = dra + ra_c
-    catalog['declination_1'] = ddec + dec_c
+    catalog['lon'] = dlon + lon_c
+    catalog['lat'] = dlat + lat_c
 
     return catalog
 

@@ -1,18 +1,18 @@
 # Purity-completeness
 
-The purpose of this module is to assess the purity (how many of my sources are real?) and completeness (how many sources are detected?) of an image or series of images. This code makes extensive use `astropy` and uses PyBDSF and its dependencies for its sourcefinding, which can be found [here](https://github.com/lofar-astron/PyBDSF). At the moment, the usage of this module assumes that regular sourcefinding has already been performed using the scripts in the [Image-processing](https://github.com/JonahDW/Image-processing) module, as certain output from that process is expected to be present (directory structure and output image).
+The purpose of this module is to assess the purity and completeness of a radio astronomical image. This code makes extensive use `astropy` and uses [PyBDSF](https://github.com/lofar-astron/PyBDSF) and its dependencies for its sourcefinding. Usage of this module assumes that regular sourcefinding has already been performed with PyBDSF, with certain outputs from that process expected to be present (residual, mean and rms images).
 
 ## completeness.py
 
-Assess the completeness of your image by injecting fake sources drawn from a catalog of simulated sources into the desired image (ideally a residual image), performing sourcefinding on the image, and seeing how many sources are retrieved.
+Assess the completeness of your image by injecting fake sources, either as randomly drawn point sources, or more realistic sources drawn from a catalog of simulated sources into the desired image, performing sourcefinding on the image, and seeing how many sources are retrieved. Recovered sources are matched to the original input catalog, enabling a range of verification and consistency tests of the sourcefinding procedure.
 
 ```
-usage: completeness.py [-h] [--realistic_counts] [--flux_bins FLUX_BINS]
-                       [--n_sim N_SIM] [--sim_cat SIM_CAT]
-                       [--flux_col FLUX_COL] [--min_flux MIN_FLUX]
-                       [--max_flux MAX_FLUX] [--n_sources N_SOURCES]
-                       [--imsize IMSIZE] [--square] [--outdir OUTDIR]
-                       [--no_delete]
+usage: completeness.py [-h] [--flux_bins FLUX_BINS] [--n_sim N_SIM]
+                       [--min_flux MIN_FLUX] [--max_flux MAX_FLUX]
+                       [--n_sources N_SOURCES] [--sim_cat SIM_CAT]
+                       [--flux_col FLUX_COL] [--real_flux_dist]
+                       [--real_sky_dist] [--pos_col POS_COL] [--imsize IMSIZE]
+                       [--square] [--outdir OUTDIR] [--no_delete]
                        image_name sources
 
 positional arguments:
@@ -35,20 +35,29 @@ positional arguments:
 
 optional arguments:
   -h, --help            show this help message and exit
-  --realistic_counts    Use a realistic flux density and spatial distribution
-                        instead of uniform per bin and in space. Simulated
-                        catalogue must be specified to draw from. (default =
-                        False)
   --flux_bins FLUX_BINS
-                        Amount of flux bins
+                        Amount of flux density bins
   --n_sim N_SIM         Number of simulations to run
-  --sim_cat SIM_CAT     Name of catalog containing sources, flux to be drawn
-                        from for input catalogs
-  --flux_col FLUX_COL   Name of column in catalog containing log flux values
   --min_flux MIN_FLUX   Log of minimum probed flux in Jansky.
   --max_flux MAX_FLUX   Log of maximum probed flux in Jansky.
   --n_sources N_SOURCES
                         Number of sources to be drawn
+  --sim_cat SIM_CAT     Name of catalog containing sources, flux to be drawn
+                        from for input catalogs
+  --flux_col FLUX_COL   Name of column in catalog containing log flux values
+  --real_flux_dist      Use the flux density distribution from the simulated
+                        catalogue instead of a (log) uniform one. (default =
+                        False)
+  --real_sky_dist       Use the spatial distribution from the simulated
+                        catalog instead of a uniform sky distribution. Instead
+                        of randomly generating source positions, a region of
+                        sky corresponding to the image size is extracted.
+                        (default = False)
+  --pos_col POS_COL     Column names of source positions (lat,lon) to use in
+                        case realistic spatial distribution is specified.
+                        These are assumed to be in the same coordinate system
+                        of the image, no conversion is made. (default =
+                        'RA,DEC')
   --imsize IMSIZE       Specify size of the image in degrees for generating
                         source positions. If the image is circular this is the
                         diameter. By default this is read from the image

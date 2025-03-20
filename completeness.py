@@ -176,7 +176,7 @@ class Image:
 
         data_2d = np.zeros(np.squeeze(image).shape)
         for source in catalog:
-            sky = SkyCoord(source['RA'], source['DEC'], unit=u.deg)
+            sky = SkyCoord(source['lon'], source['lat'], unit=u.deg)
             X, Y = wcs.world_to_pixel(sky)
 
             # Check if point source and add accordingly
@@ -216,7 +216,7 @@ class Image:
 
         return convolved_sources
 
-    def inject_sources(self, catalog, outfile, realistic_counts, imsize, square):
+    def inject_sources(self, catalog, outfile, rpos, imsize, square):
         '''
         Insert sources into an (empty) image from input catalog
 
@@ -234,23 +234,21 @@ class Image:
 
         # Generate random positions for sources
         radius = imsize/2
-        if realistic_counts:
+        if rpos:
             if self.image_id == 'empty':
                 catalog = helpers.slice_catalog(catalog, self.header['CRVAL1'],
                                                 self.header['CRVAL2'], radius, square=True)
             else:
                 catalog = helpers.slice_catalog(catalog, self.header['CRVAL1'],
                                                 self.header['CRVAL2'], radius, square=square)
-            catalog.rename_column('right_ascension_1', 'RA')
-            catalog.rename_column('declination_1', 'DEC')
         else:
             if self.image_id == 'empty':
-                catalog['RA'], catalog['DEC'] = helpers.random_ra_dec(self.header['CRVAL1'],
+                catalog['lon'], catalog['lat'] = helpers.random_lonlat(self.header['CRVAL1'],
                                                                       self.header['CRVAL2'], 
                                                                       radius, len(catalog),
                                                                       square=True)
             else:
-                catalog['RA'], catalog['DEC'] = helpers.random_ra_dec(self.header['CRVAL1'],
+                catalog['lon'], catalog['lat'] = helpers.random_lonlat(self.header['CRVAL1'],
                                                                       self.header['CRVAL2'],
                                                                       radius, len(catalog),
                                                                       square=square)
@@ -277,7 +275,9 @@ class Image:
         '''
         match_dist = self.header['BMAJ']*3600 #arcsec
 
-        c_in = SkyCoord(catalog_in['RA'], catalog_in['DEC'], unit=u.deg)
+        # I guess this only works if the WCS of the image is equatorial
+        # Keep for now as is, but might need to be account for in future
+        c_in = SkyCoord(catalog_in['lon'], catalog_in['lat'], unit=u.deg)
         c_out = SkyCoord(catalog_out['RA'], catalog_out['DEC'], unit=u.deg)
 
         idx, d2d, d3d = c_out.match_to_catalog_sky(c_in)
@@ -309,7 +309,7 @@ class Image:
         return detected_fraction, flux_fraction
 
     @save_load_results
-    def do_completeness(self, flux_bins, n_sim, n_sources, sim_cat, realistic_counts,
+    def do_completeness(self, flux_bins, n_sim, n_sources, sim_cat, rflux, rpos,
                         imsize, square, no_delete, s_type):
         '''
         Do one set of simulations on an image in order to measure the completeness
@@ -332,8 +332,31 @@ class Image:
             if os.path.exists(matched_cat_file):
                 matched_cat = Table.read(matched_cat_file)
             else:
-                if realistic_counts:
-                    catalog_in = sim_cat
+                # Randomly draw from simulated catalogue
+                if sim_cat is not None:
+                    if rpos:
+                        catalog_in = sim_cat
+                    elif rflux:
+                        catalog_rows = np.random.choice(len(sim_cat), n_sources)
+                        catalog_in = sim_cat[catalog_rows]
+                    else:
+                        # Draw in equal bins
+                        digitized_flux = np.digitize(10**sim_cat['flux'], flux_bins)
+                        catalog_rows = []
+                        for j in range(1,len(flux_bins)):
+                            samples_bin = int(n_sources/(len(flux_bins)-1))
+                            try:
+                                choice = np.random.choice(np.where(digitized_flux == j)[0], 
+                                                          samples_bin, replace=False)
+                            except ValueError:
+                                print('Not enough sources in bin, selecting with replacement')
+                                choice = np.random.choice(np.where(digitized_flux == j)[0], 
+                                                          samples_bin, replace=True)
+                            catalog_rows.append(choice)
+                        catalog_rows = np.concatenate(catalog_rows, axis=None)
+                        catalog_in = sim_cat[catalog_rows]
+
+                # Draw random point sources without catalog
                 elif s_type == 'point':
                     fluxes = np.random.uniform(np.log10(flux_bins[0]),
                                                np.log10(flux_bins[-1]),
@@ -343,27 +366,12 @@ class Image:
                     catalog_in['major_axis'] = 0
                     catalog_in['minor_axis'] = 0
                 else:
-                    # Draw from simulated catalogue and equal bins
-                    digitized_flux = np.digitize(10**sim_cat['flux'], flux_bins)
-                    catalog_rows = []
-                    for j in range(1,len(flux_bins)):
-                        samples_bin = int(n_sources/(len(flux_bins)-1))
-                        try:
-                            choice = np.random.choice(np.where(digitized_flux == j)[0], 
-                                                      samples_bin, replace=False)
-                        except ValueError:
-                            print('Not enough sources in bin, selecting with replacement')
-                            choice = np.random.choice(np.where(digitized_flux == j)[0], 
-                                                      samples_bin, replace=True)
-                        catalog_rows.append(choice)
-
-                    catalog_rows = np.concatenate(catalog_rows, axis=None)
-                    catalog_in = sim_cat[catalog_rows]
+                    print('Given source type or option cannot be simulated without input catalog')
+                    sys.exit()
 
                 # Inject sources and do sourcefinding
                 out_image_file = os.path.join(self.image_dir,f'{self.image_id}_sim_{i}.fits')
-                catalog_in = self.inject_sources(catalog_in, out_image_file, 
-                                                 realistic_counts, imsize, square)
+                catalog_in = self.inject_sources(catalog_in, out_image_file, rpos, imsize, square)
                 out_catalog_file = self.run_bdsf(out_image_file)
 
                 catalog_out = Table.read(out_catalog_file)
@@ -438,16 +446,18 @@ def main():
     sources = args.sources
 
     # Simulation options
-    realistic_counts = args.realistic_counts
     n_sources = args.n_sources
     n_flux_bins = args.flux_bins
     n_sim = args.n_sim
     min_flux = args.min_flux
     max_flux = args.max_flux
+    rflux = args.real_flux_dist
+    rpos = args.real_sky_dist
 
     # Catalog options
     sim_cat_file = args.sim_cat
     flux_col = args.flux_col
+    pos_cols = args.pos_col.split(',')
 
     # Image options
     imsize = args.imsize
@@ -464,17 +474,27 @@ def main():
 
     # Get simulated catalog, or otherwise produce a uniform flux density distribution
     if sim_cat_file:
+        print(f'Reading in {sim_cat_file} to draw sources from')
         sim_cat = ascii.read(sim_cat_file)
         sim_cat.rename_column(flux_col, 'flux')
+        if rpos:
+            sim_cat.rename_column(pos_cols[0], 'lon')
+            sim_cat.rename_column(pos_cols[1], 'lat')
         sim_flux = sim_cat[np.logical_and(sim_cat['flux'] > min_flux, sim_cat['flux'] < max_flux)]
     else:
+        print('No simulated catalogue specified, can only generate point sources uniformly')
         sim_cat = None
 
     if not os.path.exists(os.path.join(image.output_folder, 'completeness')):
         os.mkdir(os.path.join(image.output_folder, 'completeness'))
 
-    if sources == 'point' and realistic_counts:
-        sim_cat = sim_flux[sim_flux['major_axis'] == 0]
+    if sources == 'point' and sim_cat is not None:
+        if 'major_axis' in sim_flux.colnames:
+            sim_cat = sim_flux[sim_flux['major_axis'] == 0]
+        else:
+            sim_cat = sim_flux
+            sim_cat['major_axis'] = 0
+            sim_cat['minor_axis'] = 0
 
     if sources == 'extended':
         sim_cat = sim_flux[np.logical_and(sim_flux['major_axis'] > 0,sim_flux['minor_axis'] > 0)]
@@ -483,7 +503,7 @@ def main():
         sim_cat = sim_flux[np.logical_xor(sim_flux['major_axis'] > 0,sim_flux['minor_axis'] == 0.)]
 
     completeness = image.do_completeness(flux_bins, n_sim, n_sources,
-                                         sim_cat, realistic_counts,
+                                         sim_cat, rflux, rpos,
                                          imsize, square, no_delete, 
                                          s_type=sources)
 
@@ -510,25 +530,35 @@ def new_argument_parser():
                                 size distribution. If nonzero source sizes are used in
                                 any way, sources must be drawn from specified
                                 simulated catalogue.""")
-    parser.add_argument("--realistic_counts", action="store_true",
-                        help="""Use a realistic flux density and spatial distribution 
-                                instead of uniform per bin and in space. Simulated 
-                                catalogue must be specified to draw from. (default = False)""")
     parser.add_argument("--flux_bins", default=30, type=int,
-                        help="Amount of flux bins")
+                        help="Amount of flux density bins")
     parser.add_argument("--n_sim", default=10, type=int,
                         help="Number of simulations to run")
-    parser.add_argument("--sim_cat", default=None, type=str,
-                        help="""Name of catalog containing sources, flux to be drawn
-                                from for input catalogs""")
-    parser.add_argument("--flux_col", default=None, type=str,
-                        help="Name of column in catalog containing log flux values")
     parser.add_argument("--min_flux", default=-5, type=float,
                         help="Log of minimum probed flux in Jansky.")
     parser.add_argument("--max_flux", default=-2, type=float,
                         help="Log of maximum probed flux in Jansky.")
     parser.add_argument("--n_sources", default=5000, type=int,
                         help="Number of sources to be drawn")
+    parser.add_argument("--sim_cat", default=None, type=str,
+                        help="""Name of catalog containing sources, flux to be drawn
+                                from for input catalogs""")
+    parser.add_argument("--flux_col", default=None, type=str,
+                        help="Name of column in catalog containing log flux values")
+    parser.add_argument("--real_flux_dist", action="store_true",
+                        help="""Use the flux density distribution from the simulated
+                                catalogue instead of a (log) uniform one. (default = False)""")
+    parser.add_argument("--real_sky_dist", action="store_true",
+                        help="""Use the spatial distribution from the simulated catalog 
+                                instead of a uniform sky distribution. Instead of 
+                                randomly generating source positions, a region of sky 
+                                corresponding to the image size is extracted.
+                                (default = False)""")
+    parser.add_argument("--pos_col", default='RA,DEC', type=str,
+                        help="""Column names of source positions (lat,lon) to use
+                                in case realistic spatial distribution is specified.
+                                These are assumed to be in the same coordinate system
+                                of the image, no conversion is made. (default = 'RA,DEC')""")
     parser.add_argument("--imsize", default=None, type=float,
                         help="""Specify size of the image in degrees for generating 
                                 source positions. If the image is circular this is the 
